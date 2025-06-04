@@ -1,7 +1,8 @@
 import streamlit as st # type: ignore
 import pandas as pd # type: ignore
 import numpy as np # type: ignore
-import os # Import module os untuk operasi sistem file
+import os
+import plotly.express as px # type: ignore # Import module Plotly untuk grafik interaktif
 
 # === KONFIGURASI PATH ===
 # Pilih salah satu path di bawah ini (komen yang tidak dipakai)
@@ -37,7 +38,7 @@ def get_data_files(folder_path):
     files = []
     if os.path.exists(folder_path):
         for f_name in os.listdir(folder_path):
-            if f_name.endswith(('.xlsx', '.csv')):
+            if os.path.isfile(os.path.join(folder_path, f_name)) and f_name.lower().endswith(('.xlsx', '.csv')):
                 files.append(f_name)
     return sorted(files)
 
@@ -54,9 +55,9 @@ if transaksi_files:
     TRANSAKSI_FILE_PATH_FULL = os.path.join(PENJUALAN_FOLDER, selected_transaksi_file)
 
     try:
-        if TRANSAKSI_FILE_PATH_FULL.endswith('.csv'):
+        if TRANSAKSI_FILE_PATH_FULL.lower().endswith('.csv'):
             df_transaksi = pd.read_csv(TRANSAKSI_FILE_PATH_FULL)
-        elif TRANSAKSI_FILE_PATH_FULL.endswith('.xlsx'):
+        elif TRANSAKSI_FILE_PATH_FULL.lower().endswith('.xlsx'):
             df_transaksi = pd.read_excel(TRANSAKSI_FILE_PATH_FULL)
         
         st.success(f"File laporan penjualan '{selected_transaksi_file}' udah dimuat.")
@@ -100,9 +101,9 @@ if iklan_files:
     DETAIL_FILE_PATH_FULL = os.path.join(IKLAN_FOLDER, selected_detail_file)
 
     try:
-        if DETAIL_FILE_PATH_FULL.endswith('.csv'):
+        if DETAIL_FILE_PATH_FULL.lower().endswith('.csv'):
             df_detail = pd.read_csv(DETAIL_FILE_PATH_FULL)
-        elif DETAIL_FILE_PATH_FULL.endswith('.xlsx'):
+        elif DETAIL_FILE_PATH_FULL.lower().endswith('.xlsx'):
             df_detail = pd.read_excel(DETAIL_FILE_PATH_FULL)
         
         st.success(f"File iklan '{selected_detail_file}' nya dah dimuat.")
@@ -252,15 +253,12 @@ if 'data_merged' in st.session_state and st.session_state['data_merged'] is not 
     
     if not df.empty:
         # --- MODIFIKASI: Hanya tampilkan kolom yang diminta ---
-        columns_to_display = ['index_kolom', 'No_Pesanan', 'Status_Pesanan', 'Tanggal_Dibuat', 'Nama_Produk', 'Nama_Pembeli', 'Jumlah_Pesanan', 'Total_Pendapatan', 'Iklan']
-        
-        # Pastikan kolom 'index_kolom' ada
-        df_display = df.reset_index(names=['index_kolom']) 
+        columns_to_display = ['No_Pesanan', 'Status_Pesanan', 'Tanggal_Dibuat', 'Nama_Produk', 'Nama_Pembeli', 'Jumlah_Pesanan', 'Total_Pendapatan', 'Iklan']
         
         # Saring kolom yang ada di DataFrame untuk ditampilkan dari list yang diinginkan
-        actual_columns_to_show = [col for col in columns_to_display if col in df_display.columns]
+        actual_columns_to_show = [col for col in columns_to_display if col in df.columns]
         
-        st.dataframe(df_display[actual_columns_to_show])
+        st.dataframe(df[actual_columns_to_show]) # Tambahkan hide_index=True
         st.write(f"Jumlah baris setelah difilter: **{len(df)}**")
 
         # --- Otomasi Kalkulasi Real-Time (RINGKASAN BARU) ---
@@ -290,6 +288,63 @@ if 'data_merged' in st.session_state and st.session_state['data_merged'] is not 
             col_calc3.metric("Total Iklan", f"{total_iklan:,.0f}".replace(',', '.'))
         else:
             col_calc3.warning("Kolom 'Iklan' tidak ditemukan.")
+
+        # --- Grafik Interaktif: Pendapatan dan Iklan Per Hari ---
+        st.write("---")
+        st.subheader("3. Grafik Tren Harian")
+
+        # Pastikan kolom Tanggal_Dibuat ada dan tipenya datetime
+        if 'Tanggal_Dibuat' in df.columns and pd.api.types.is_datetime64_any_dtype(df['Tanggal_Dibuat']):
+            # Agregasi data per hari
+            # Group by Tanggal_Dibuat (date only) dan sum Total_Pendapatan serta Iklan
+            df_daily = df.groupby(df['Tanggal_Dibuat'].dt.date).agg(
+                Total_Pendapatan=('Total_Pendapatan', 'sum'),
+                Total_Iklan=('Iklan', 'sum')
+            ).reset_index()
+
+            # Rename kolom Tanggal_Dibuat menjadi 'Tanggal' agar lebih umum
+            df_daily.rename(columns={'Tanggal_Dibuat': 'Tanggal'}, inplace=True)
+
+            # Sort data berdasarkan tanggal
+            df_daily = df_daily.sort_values('Tanggal')
+
+            # --- Grafik 1: Tren Pendapatan Harian ---
+            st.markdown("##### Tren Total Pendapatan Harian")
+            if not df_daily.empty:
+                fig_pendapatan = px.line(
+                    df_daily, 
+                    x='Tanggal', 
+                    y='Total_Pendapatan', 
+                    title='Total Pendapatan per Hari',
+                    labels={'Total_Pendapatan': 'Pendapatan (Rp)', 'Tanggal': 'Tanggal Dibuat'},
+                    hover_name="Tanggal",
+                    hover_data={'Total_Pendapatan': ':.0f'}
+                )
+                fig_pendapatan.update_traces(mode='lines+markers') # Tampilkan garis dan titik
+                fig_pendapatan.update_layout(hovermode="x unified") # Hover jadi lebih informatif
+                st.plotly_chart(fig_pendapatan, use_container_width=True)
+            else:
+                st.info("Tidak ada data pendapatan harian untuk ditampilkan.")
+
+            # --- Grafik 2: Tren Iklan Harian ---
+            st.markdown("##### Tren Biaya Iklan Harian")
+            if not df_daily.empty:
+                fig_iklan = px.line(
+                    df_daily, 
+                    x='Tanggal', 
+                    y='Total_Iklan', 
+                    title='Total Biaya Iklan per Hari',
+                    labels={'Total_Iklan': 'Biaya Iklan (Rp)', 'Tanggal': 'Tanggal Dibuat'},
+                    hover_name="Tanggal",
+                    hover_data={'Total_Iklan': ':.0f'}
+                )
+                fig_iklan.update_traces(mode='lines+markers') # Tampilkan garis dan titik
+                fig_iklan.update_layout(hovermode="x unified") # Hover jadi lebih informatif
+                st.plotly_chart(fig_iklan, use_container_width=True)
+            else:
+                st.info("Tidak ada data biaya iklan harian untuk ditampilkan.")
+        else:
+            st.warning("Kolom 'Tanggal_Dibuat' tidak ditemukan atau bukan tipe tanggal, tidak bisa bikin grafik harian.")
 
     else:
         st.warning("Tidak ada data yang cocok dengan filter yang dipilih, bos.")
